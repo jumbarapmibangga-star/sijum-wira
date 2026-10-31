@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo papan skor Jumbara</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root{--merah:#C8102E;--tinta:#1d2430;--abu:#667085;--garis:#e4e7ec;--latar:#fbfaf8;--putih:#fff;--hijau:#1a7f4b}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Figtree,system-ui,sans-serif;background:var(--latar);color:var(--tinta);line-height:1.5}
+  .wrap{max-width:980px;margin:0 auto;padding:28px 18px 48px}
+  h1{font-size:1.6rem;font-weight:800;margin:0 0 4px}
+  .sub{color:var(--abu);margin:0 0 24px}
+  .grid{display:grid;grid-template-columns:320px 1fr;gap:28px;align-items:start}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  h2{font-size:1.05rem;font-weight:600;margin:0 0 12px}
+  form{background:var(--putih);border:1px solid var(--garis);border-radius:10px;padding:18px}
+  label{display:block;font-weight:600;font-size:.9rem;margin:0 0 4px}
+  input,select{width:100%;font:inherit;padding:10px 12px;border:1px solid #cfd4dc;border-radius:6px;background:var(--putih);margin-bottom:14px}
+  input:focus-visible,select:focus-visible,button:focus-visible{outline:3px solid #f2b3bd;outline-offset:1px}
+  button{font:inherit;font-weight:600;width:100%;padding:11px;border:0;border-radius:6px;background:var(--merah);color:#fff;cursor:pointer}
+  button:disabled{opacity:.55;cursor:not-allowed}
+  .status{display:flex;align-items:center;gap:8px;font-size:.85rem;color:var(--abu);margin-bottom:14px}
+  .dot{width:9px;height:9px;border-radius:50%;background:#c4c9d2}
+  .dot.on{background:var(--hijau)}
+  .baris{display:grid;grid-template-columns:2.2rem 1fr auto;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--garis)}
+  .peringkat{font-size:1.5rem;font-weight:800;color:var(--merah);text-align:center}
+  .nama{font-weight:600}
+  .batang{height:7px;border-radius:4px;background:var(--garis);margin-top:6px;overflow:hidden}
+  .batang span{display:block;height:100%;background:var(--merah);transition:width .5s ease}
+  .total{font-size:1.25rem;font-weight:800;font-variant-numeric:tabular-nums}
+  .kosong,.pesan{color:var(--abu);padding:18px 0}
+  .galat{background:#fdecee;border:1px solid #f4b8c0;color:#8a1022;padding:12px 14px;border-radius:8px;margin-bottom:18px}
+  #toast{min-height:1.4em;margin-top:10px;font-size:.9rem;color:var(--hijau)}
+  @media(prefers-reduced-motion:reduce){.batang span{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Papan skor Jumbara</h1>
+  <p class="sub">Demo: juri menyimpan nilai di kiri, peringkat di kanan berubah sendiri tanpa refresh.</p>
+
+  <div id="galat" class="galat" hidden></div>
+
+  <div class="grid">
+    <form id="form">
+      <h2>Input nilai</h2>
+      <label for="kontingen">Nama kontingen</label>
+      <input id="kontingen" required maxlength="40" placeholder="mis. SMPN 1 Purbalingga">
+      <label for="pos">Pos</label>
+      <select id="pos">
+        <option>Pos Kepemimpinan</option>
+        <option>Pos Pertolongan Pertama</option>
+        <option>Pos Lainnya</option>
+      </select>
+      <label for="skor">Nilai (0–100)</label>
+      <input id="skor" type="number" min="0" max="100" required>
+      <button id="simpan" type="submit">Simpan nilai</button>
+      <div id="toast" role="status"></div>
+    </form>
+
+    <section>
+      <h2>Peringkat sementara</h2>
+      <div class="status"><span id="dot" class="dot"></span><span id="status">Belum tersambung</span></div>
+      <div id="papan"><p class="kosong">Belum ada nilai masuk. Simpan nilai pertama dari formulir.</p></div>
+    </section>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+  // 1. Isi dua baris ini dari Project Settings > API di Supabase
+  const SUPABASE_URL = 'ISI_URL_PROYEK';
+  const SUPABASE_KEY = 'ISI_KUNCI_PUBLIK';
+
+  const $ = id => document.getElementById(id);
+  const galat = msg => { $('galat').textContent = msg; $('galat').hidden = false; };
+
+  if (SUPABASE_URL.startsWith('ISI_') || SUPABASE_KEY.startsWith('ISI_')) {
+    galat('Isi SUPABASE_URL dan SUPABASE_KEY di bagian script, lalu muat ulang halaman.');
+    $('simpan').disabled = true;
+  } else {
+    const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    async function muat() {
+      const { data, error } = await db.from('nilai_demo').select('kontingen, skor');
+      if (error) { galat('Gagal membaca data: ' + error.message); return; }
+      const jumlah = {};
+      data.forEach(r => { jumlah[r.kontingen] = (jumlah[r.kontingen] || 0) + r.skor; });
+      const urut = Object.entries(jumlah).sort((a, b) => b[1] - a[1]);
+      const papan = $('papan');
+      papan.textContent = '';
+      if (!urut.length) {
+        papan.innerHTML = '<p class="kosong">Belum ada nilai masuk. Simpan nilai pertama dari formulir.</p>';
+        return;
+      }
+      const tertinggi = urut[0][1] || 1;
+      urut.forEach(([nama, total], i) => {
+        const baris = document.createElement('div'); baris.className = 'baris';
+        const rank = document.createElement('div'); rank.className = 'peringkat'; rank.textContent = i + 1;
+        const tengah = document.createElement('div');
+        const n = document.createElement('div'); n.className = 'nama'; n.textContent = nama;
+        const b = document.createElement('div'); b.className = 'batang';
+        const s = document.createElement('span'); s.style.width = (total / tertinggi * 100) + '%';
+        b.appendChild(s); tengah.append(n, b);
+        const t = document.createElement('div'); t.className = 'total'; t.textContent = total;
+        baris.append(rank, tengah, t); papan.appendChild(baris);
+      });
+    }
+
+    $('form').addEventListener('submit', async e => {
+      e.preventDefault();
+      $('simpan').disabled = true;
+      const { error } = await db.from('nilai_demo').insert({
+        kontingen: $('kontingen').value.trim(),
+        pos: $('pos').value,
+        skor: Number($('skor').value)
+      });
+      $('simpan').disabled = false;
+      if (error) { $('toast').style.color = '#8a1022'; $('toast').textContent = 'Gagal menyimpan: ' + error.message; return; }
+      $('toast').style.color = ''; $('toast').textContent = 'Nilai disimpan';
+      $('skor').value = ''; $('skor').focus();
+      muat();
+    });
+
+    muat();
+    db.channel('nilai-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'nilai_demo' }, muat)
+      .subscribe(st => {
+        const on = st === 'SUBSCRIBED';
+        $('dot').classList.toggle('on', on);
+        $('status').textContent = on ? 'Terhubung, update otomatis' : 'Menyambung…';
+      });
+  }
+</script>
+</body>
+</html>
